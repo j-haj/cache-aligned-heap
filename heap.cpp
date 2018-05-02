@@ -81,8 +81,8 @@ class Heap {
   std::size_t last_parent() {
     return static_cast<std::size_t>(std::log2(size_ + 1));
   }
-  std::size_t lchild_index(std::size_t idx) { return idx * 2 + 1; }
-  std::size_t rchild_index(std::size_t idx) { return idx * 2 + 2; }
+  std::size_t lchild_index(std::size_t idx) { return (idx - offset_) * 2 + 1 + offset_; }
+  std::size_t rchild_index(std::size_t idx) { return (idx - offset_) * 2 + 2 + offset_; }
 
   // Member variables
   std::unique_ptr<T[]> heap_;
@@ -94,7 +94,7 @@ class Heap {
 template <typename T>
 void Heap<T>::heapify() {
   std::stack<std::size_t> index_stack;
-  index_stack.push(static_cast<std::size_t>((offset_ + size_) / 2));
+  index_stack.push(static_cast<std::size_t>(offset_ + size_));
   while (!index_stack.empty()) {
     const auto parent_idx = index_stack.top();
     index_stack.pop();
@@ -102,14 +102,16 @@ void Heap<T>::heapify() {
     if (parent_idx > offset_) {
       index_stack.push(parent_idx - 1);
     }
+    if (lchild_index(parent_idx) > offset_ + size_ - 1 && rchild_index(parent_idx) > offset_ + size_ - 1) continue;
 
     auto lchild = heap_[lchild_index(parent_idx)];
     auto rchild = heap_[rchild_index(parent_idx)];
-    if (lchild_index(parent_idx) < size_ && lchild < heap_[offset_ + parent_idx]) {
-      swap_idx( lchild_index(parent_idx), parent_idx);
+
+    if (lchild_index(parent_idx) < offset_ + size_ && lchild < heap_[parent_idx]) {
+      swap_idx(lchild_index(parent_idx), parent_idx);
       index_stack.push(lchild_index(parent_idx));
     }
-    if (rchild_index(parent_idx) < size_ && rchild < heap_[parent_idx]) {
+    if (rchild_index(parent_idx) < offset_ + size_ && rchild < heap_[parent_idx]) {
       swap_idx(rchild_index(parent_idx), parent_idx);
       index_stack.push(rchild_index(parent_idx));
     }
@@ -122,69 +124,46 @@ int main() {
   std::cout << "#######\n"
             << " START\n"
             << "######\n";
-  constexpr int N = 10;
-  constexpr int N_TRIALS = 1;
-  using value_type = short;
+  constexpr int N = 5000;
+  constexpr int N_TRIALS = 50;
+  using value_type = float;
   std::vector<value_type> v;
   for (int i = N; i > 0; --i) v.push_back(static_cast<value_type>(i));
+  std::cout << "Warming up cache...\n";
+  for (int i = 0; i < N_TRIALS; ++i) volatile Heap<value_type> h(v);
+
   std::cout << "Building heap\n";
 
   std::vector<double> standard_offset(N_TRIALS);
-  std::vector<double> h1_offset(N_TRIALS);
-  std::vector<double> h2_offset(N_TRIALS);
-  std::vector<double> h3_offset(N_TRIALS);
-  std::vector<double> h4_offset(N_TRIALS);
 
   for (int i = 0; i < N_TRIALS; ++i) {
     auto start = steady_clock::now();
-    Heap<value_type> h(v);
+    Heap<value_type> h(v, 0);
     auto stop = steady_clock::now();
+
     std::chrono::duration<double> elapsed = stop - start;
     standard_offset[i] = elapsed.count();
-
-    start = steady_clock::now();
-    Heap<value_type> h1(v, 1);
-    std::cout << "h1: " << h1 << '\n';
-    stop = steady_clock::now();
-    elapsed = stop - start;
-    h1_offset[i] = elapsed.count();
-
-    start = steady_clock::now();
-    Heap<value_type> h2(v, 2);
-    std::cout << "h2: " << h2 << '\n';
-    stop = steady_clock::now();
-    elapsed = stop - start;
-    h2_offset[i] = elapsed.count();
-
-    start = steady_clock::now();
-    Heap<value_type> h3(v, 3);
-    std::cout << "h3: " << h3 << '\n';
-
-    stop = steady_clock::now();
-    elapsed = stop - start;
-    h3_offset[i] = elapsed.count();
-
-    start = steady_clock::now();
-    Heap<value_type> h4(v, 4);
-    std::cout << "h4: " << h4 << '\n';
-    stop = steady_clock::now();
-    elapsed = stop - start;
-    h4_offset[i] = elapsed.count();
   }
 
-  double standard_time = std::accumulate(standard_offset.begin(), standard_offset.end(), 0.0)/standard_offset.size();
-  double h1_time = std::accumulate(h1_offset.begin(), h1_offset.end(), 0.0)/h1_offset.size();
-  double h2_time = std::accumulate(h2_offset.begin(), h2_offset.end(), 0.0)/h2_offset.size();
-  double h3_time = std::accumulate(h3_offset.begin(), h3_offset.end(), 0.0)/h3_offset.size();
-  double h4_time = std::accumulate(h4_offset.begin(), h4_offset.end(), 0.0)/h4_offset.size();
+  double standard_time = std::accumulate(standard_offset.begin(), standard_offset.end(), 0.0)/N_TRIALS;
+  std::cout << "Averaged over " << N_TRIALS << " runs\n";
+  std::cout << "\tStandard layout heap built in " << standard_time << " seconds\n";
 
-  std::cout << "Average over " << N_TRIALS << " runs:"
-            << "\n\tStandard layout heap built in " << standard_time
-            << "\n\tH1 offset heap built in " << h1_time << " (" << h1_time / standard_time << "\% of standard)"
-            << "\n\tH1 offset heap built in " << h2_time << " (" << h2_time / standard_time << "\% of standard)"
-            << "\n\tH1 offset heap built in " << h3_time << " (" << h3_time / standard_time << "\% of standard)"
-            << "\n\tH1 offset heap built in " << h4_time << " (" << h4_time / standard_time << "\% of standard)"
-            << "\n";
+  for (int i = 0; i < 10; ++i) {
+    std::vector<double> h_offset(N_TRIALS);
+    for (int j = 0; j < N_TRIALS; ++j) {
+      // Time heap construction
+      auto start = steady_clock::now();
+      Heap<value_type> ho(v, i);
+      auto stop = steady_clock::now();
+
+      std::chrono::duration<double> elapsed = stop - start;
+      h_offset[j] = elapsed.count();
+    }
+    double time = std::accumulate(h_offset.begin(), h_offset.end(), 0.0)/N_TRIALS;
+    std::cout << "\tHeap offset used: " << i << " heap built in " << time << " seconds (" << time / standard_time << "\% of standard)\n";
+
+  }
 
   return 0;
 }
